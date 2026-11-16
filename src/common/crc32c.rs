@@ -59,7 +59,7 @@ pub fn crc32c_extend(crc: u32, data: &[u8]) -> u32 {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse4.2")]
-unsafe fn crc32c_sse42(mut crc: u32, mut data: &[u8]) -> u32 {
+unsafe fn crc32c_sse42(crc: u32, mut data: &[u8]) -> u32 {
     use std::arch::x86_64::*;
 
     let mut crc64 = crc as u64;

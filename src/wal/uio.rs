@@ -13,8 +13,7 @@ impl UioDriver {
     pub fn new(entries: u32) -> Result<Self> {
         #[cfg(target_os = "linux")]
         {
-            let ring = io_uring::IoUring::new(entries)
-                .map_err(|e| AetherError::Io(std::io::Error::from(e)))?;
+            let ring = io_uring::IoUring::new(entries).map_err(AetherError::Io)?;
             Ok(Self { ring })
         }
 
@@ -37,16 +36,11 @@ impl UioDriver {
 
             unsafe {
                 self.ring.submission().push(&write_e).map_err(|_| {
-                    AetherError::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "io_uring submission queue full",
-                    ))
+                    AetherError::Io(std::io::Error::other("io_uring submission queue full"))
                 })?;
             }
 
-            self.ring
-                .submit_and_wait(1)
-                .map_err(|e| AetherError::Io(std::io::Error::from(e)))?;
+            self.ring.submit_and_wait(1).map_err(AetherError::Io)?;
 
             let mut cqe_iter = self.ring.completion();
             if let Some(cqe) = cqe_iter.next() {
