@@ -4,10 +4,9 @@ pub mod stall;
 pub use picker::{CompactionPicker, CompactionTask, L0_COMPACTION_THRESHOLD};
 pub use stall::BackpressureController;
 
-use crate::common::{extract_tag, extract_user_key, Result, ValueType};
+use crate::common::{compare_internal_keys, extract_tag, extract_user_key, Result, ValueType};
 use crate::manifest::{FileMetaData, VersionEdit, VersionSet};
 use crate::sstable::{TableBuilder, TableReader};
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -36,32 +35,36 @@ impl CompactionExecutor {
         let mut readers = Vec::new();
 
         // Open all input files
-        for f in task.input_level_files.iter().chain(task.output_level_files.iter()) {
+        for f in task
+            .input_level_files
+            .iter()
+            .chain(task.output_level_files.iter())
+        {
             let path = self.db_dir.join(format!("{:08}.sst", f.file_id));
             if let Ok(reader) = TableReader::open(&path) {
                 readers.push(reader);
             }
         }
 
-        // K-way merge using sorted map or priority queue
-        // Keys are sorted according to compare_internal_keys
-        let mut merged_map: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
+        let mut all_entries = Vec::new();
         for reader in &readers {
             for (ikey, val) in reader.iter() {
-                merged_map.insert(ikey, val);
+                all_entries.push((ikey, val));
             }
         }
 
-        // Filter superseded keys / tombstones
+        // Sort all entries according to internal key ordering (user key ASC, sequence number DESC)
+        all_entries.sort_by(|a, b| compare_internal_keys(&a.0, &b.0));
+
+        // Filter superseded keys / tombstones (first occurrence of each user key is the newest version)
         let mut deduped_entries: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
         let mut last_user_key: Option<Vec<u8>> = None;
 
-        for (ikey, val) in merged_map {
+        for (ikey, val) in all_entries {
             let ukey = extract_user_key(&ikey).to_vec();
             if let Some(ref last) = last_user_key {
                 if *last == ukey {
-                    // Newer version already taken because BTreeMap sorts ascending
-                    // (in internal key comparison, newer versions sort first)
+                    // Newer version already taken
                     continue;
                 }
             }
@@ -135,7 +138,11 @@ impl CompactionExecutor {
     }
 
     fn cleanup_files(&self, task: &CompactionTask) -> Result<()> {
-        for f in task.input_level_files.iter().chain(task.output_level_files.iter()) {
+        for f in task
+            .input_level_files
+            .iter()
+            .chain(task.output_level_files.iter())
+        {
             let path = self.db_dir.join(format!("{:08}.sst", f.file_id));
             let _ = std::fs::remove_file(path);
         }

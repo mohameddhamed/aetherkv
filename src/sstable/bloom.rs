@@ -1,10 +1,9 @@
-/// 256-bit Block-Split Bloom Filter (Split-Block Bloom Filter).
-/// Uses AVX2 SIMD instructions on x86_64 and a bit-compatible portable fallback.
-/// Consumes 8 bits per key (~1% false positive rate) with single cacheline (32-byte) locality.
+//! 256-bit Block-Split Bloom Filter (Split-Block Bloom Filter).
+//! Uses AVX2 SIMD instructions on x86_64 and a bit-compatible portable fallback.
+//! Consumes 10 bits per key (<1% false positive rate) with single cacheline (32-byte) locality.
 
 const SALTS: [u32; 8] = [
-    0x9efc4947, 0x2df1424b, 0x705495c7, 0xa2b7289d,
-    0x8824ad5b, 0x44974d91, 0x47b6137b, 0x00000001,
+    0x9efc4947, 0x2df1424b, 0x705495c7, 0xa2b7289d, 0x8824ad5b, 0x44974d91, 0x47b6137b, 0x00000001,
 ];
 
 pub struct BlockSplitBloomFilter {
@@ -17,7 +16,7 @@ impl BlockSplitBloomFilter {
     /// Allocates approximately `bits_per_key` (recommended: 8) bits per key.
     pub fn build_from_hashes(hashes: &[u64], bits_per_key: usize) -> Self {
         let total_bits = (hashes.len() * bits_per_key).max(256);
-        let num_blocks = (total_bits + 255) / 256;
+        let num_blocks = total_bits.div_ceil(256);
         let mut filter = Self {
             data: vec![0u8; num_blocks * 32],
             num_blocks,
@@ -61,8 +60,8 @@ impl BlockSplitBloomFilter {
 
         unsafe {
             let block_ptr = self.data.as_mut_ptr().add(block_offset) as *mut u32;
-            for i in 0..8 {
-                let shift = (key_hash.wrapping_mul(SALTS[i])) >> 27;
+            for (i, &salt) in SALTS.iter().enumerate() {
+                let shift = (key_hash.wrapping_mul(salt)) >> 27;
                 let mask = 1u32 << shift;
                 *block_ptr.add(i) |= mask;
             }
@@ -104,8 +103,8 @@ impl BlockSplitBloomFilter {
 /// Portable SIMD-equivalent bitwise evaluation.
 #[inline(always)]
 unsafe fn test_key_portable(block_ptr: *const u32, key_hash: u32) -> bool {
-    for i in 0..8 {
-        let shift = (key_hash.wrapping_mul(SALTS[i])) >> 27;
+    for (i, &salt) in SALTS.iter().enumerate() {
+        let shift = (key_hash.wrapping_mul(salt)) >> 27;
         let mask = 1u32 << shift;
         if (*block_ptr.add(i) & mask) == 0 {
             return false;
@@ -148,10 +147,10 @@ unsafe fn test_key_avx2(block_ptr: *const std::arch::x86_64::__m256i, key_hash: 
 #[inline(always)]
 pub fn hash_key(key: &[u8]) -> u64 {
     let mut h = 0xc6a4a7935bd1e995u64 ^ (key.len() as u64).wrapping_mul(0x5bd1e995);
-    let mut chunks = key.chunks_exact(8);
+    let (chunks, remainder) = key.as_chunks::<8>();
 
-    for chunk in &mut chunks {
-        let mut k = u64::from_le_bytes(chunk.try_into().unwrap());
+    for chunk in chunks {
+        let mut k = u64::from_le_bytes(*chunk);
         k = k.wrapping_mul(0x5bd1e995);
         k ^= k >> 47;
         k = k.wrapping_mul(0x5bd1e995);
@@ -160,7 +159,6 @@ pub fn hash_key(key: &[u8]) -> u64 {
         h = h.wrapping_mul(0x5bd1e995);
     }
 
-    let remainder = chunks.remainder();
     if !remainder.is_empty() {
         let mut rem_buf = [0u8; 8];
         rem_buf[..remainder.len()].copy_from_slice(remainder);
@@ -215,6 +213,10 @@ mod tests {
 
         let fpr = (false_positives as f64) / (queries as f64);
         println!("Observed Bloom False Positive Rate: {:.3}%", fpr * 100.0);
-        assert!(fpr < 0.015, "FPR {:.3}% exceeded 1.5% threshold", fpr * 100.0);
+        assert!(
+            fpr < 0.015,
+            "FPR {:.3}% exceeded 1.5% threshold",
+            fpr * 100.0
+        );
     }
 }

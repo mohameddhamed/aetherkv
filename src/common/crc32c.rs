@@ -1,6 +1,6 @@
-/// CRC32C (Castagnoli, polynomial 0x1EDC6F41 / reflected 0x82F63B78)
-/// Supports SSE4.2 hardware acceleration on x86_64, ARMv8 CRC32 on AArch64,
-/// and an 8-way sliced lookup table fallback.
+//! CRC32C (Castagnoli, polynomial 0x1EDC6F41 / reflected 0x82F63B78)
+//! Supports SSE4.2 hardware acceleration on x86_64, ARMv8 CRC32 on AArch64,
+//! and an 8-way sliced lookup table fallback.
 
 pub const CRC32C_INIT: u32 = 0xFFFF_FFFF;
 
@@ -25,7 +25,8 @@ const CRC32C_TABLE: [[u32; 256]; 8] = {
     while slice < 8 {
         let mut i = 0;
         while i < 256 {
-            table[slice][i] = (table[slice - 1][i] >> 8) ^ table[0][(table[slice - 1][i] & 0xFF) as usize];
+            table[slice][i] =
+                (table[slice - 1][i] >> 8) ^ table[0][(table[slice - 1][i] & 0xFF) as usize];
             i += 1;
         }
         slice += 1;

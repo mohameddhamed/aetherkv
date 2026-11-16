@@ -119,7 +119,8 @@ impl Engine {
         {
             let need_freeze = {
                 let active = self.active_mem.read();
-                active.is_full() || self.wal.lock().is_near_capacity()
+                active.approximate_size() + batch.size_in_bytes() + 4096 > active.arena().capacity()
+                    || self.wal.lock().is_near_capacity()
             };
             if need_freeze {
                 self.freeze_active_memtable()?;
@@ -141,8 +142,8 @@ impl Engine {
                 if let Err(AetherError::WalExhausted) = res {
                     wal_exhausted = true;
                     break;
-                } else if let Err(e) = res {
-                    return Err(e);
+                } else {
+                    res?;
                 }
             }
 
@@ -160,15 +161,25 @@ impl Engine {
 
         // 4. Insert into active MemTable (Lock-Free SkipList)
         {
-            let active = self.active_mem.read();
+            let mut active = self.active_mem.read();
             for op in batch.ops() {
                 let seq = self.next_seq.load(Ordering::Relaxed) - 1;
-                match op {
-                    BatchOp::Put { key, value } => {
-                        active.insert(key, value, seq, ValueType::Put);
-                    }
-                    BatchOp::Delete { key } => {
-                        active.insert(key, &[], seq, ValueType::Delete);
+                let inserted = match op {
+                    BatchOp::Put { key, value } => active.insert(key, value, seq, ValueType::Put),
+                    BatchOp::Delete { key } => active.insert(key, &[], seq, ValueType::Delete),
+                };
+
+                if !inserted {
+                    drop(active);
+                    self.freeze_active_memtable()?;
+                    active = self.active_mem.read();
+                    match op {
+                        BatchOp::Put { key, value } => {
+                            active.insert(key, value, seq, ValueType::Put);
+                        }
+                        BatchOp::Delete { key } => {
+                            active.insert(key, &[], seq, ValueType::Delete);
+                        }
                     }
                 }
             }

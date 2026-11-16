@@ -24,10 +24,18 @@ impl fmt::Display for AetherError {
             Self::MemTableFull => write!(f, "MemTable arena capacity exceeded"),
             Self::InvalidMagicNumber => write!(f, "Invalid SSTable magic number"),
             Self::BlockCrcMismatch { expected, actual } => {
-                write!(f, "Block CRC mismatch: expected 0x{:08X}, got 0x{:08X}", expected, actual)
+                write!(
+                    f,
+                    "Block CRC mismatch: expected 0x{:08X}, got 0x{:08X}",
+                    expected, actual
+                )
             }
             Self::FrameCrcMismatch { expected, actual } => {
-                write!(f, "WAL Frame CRC mismatch: expected 0x{:08X}, got 0x{:08X}", expected, actual)
+                write!(
+                    f,
+                    "WAL Frame CRC mismatch: expected 0x{:08X}, got 0x{:08X}",
+                    expected, actual
+                )
             }
             Self::InvalidRecordType(t) => write!(f, "Invalid record type: {}", t),
             Self::KeyNotFound => write!(f, "Key not found"),

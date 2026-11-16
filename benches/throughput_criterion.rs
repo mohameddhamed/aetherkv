@@ -30,11 +30,15 @@ fn bench_crc32c_hardware(c: &mut Criterion) {
     let payload = vec![0x5Au8; 4096]; // 4KB buffer
     group.throughput(Throughput::Bytes(payload.len() as u64));
 
-    group.bench_with_input(BenchmarkId::new("throughput", "4096_bytes"), &payload, |b, data| {
-        b.iter(|| {
-            black_box(crc32c(data));
-        });
-    });
+    group.bench_with_input(
+        BenchmarkId::new("throughput", "4096_bytes"),
+        &payload,
+        |b, data| {
+            b.iter(|| {
+                black_box(crc32c(data));
+            });
+        },
+    );
 
     group.finish();
 }
@@ -81,11 +85,9 @@ fn bench_block_delta_decoding(c: &mut Criterion) {
     }
     let block_bytes = builder.finish();
     let reader = BlockReader::new(&block_bytes).unwrap();
-    let target = InternalKey::new(b"usr_000050".to_vec(), 1, ValueType::Put).encode();
-
     group.bench_function("binary_search_point_lookup", |b| {
         b.iter(|| {
-            black_box(reader.get(&target));
+            black_box(reader.get(b"usr_000050", 1));
         });
     });
 

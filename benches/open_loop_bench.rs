@@ -90,10 +90,22 @@ fn main() {
     println!("  Sustained Throughput:   {:.2} IOPS", sustained_iops);
     println!("--------------------------------------------------------------------------");
     println!("  Latency Percentiles (True Wait + Service Time):");
-    println!("    P50   (Median):  {:>6} µs", combined_hist.value_at_quantile(0.50));
-    println!("    P90:             {:>6} µs", combined_hist.value_at_quantile(0.90));
-    println!("    P99:             {:>6} µs", combined_hist.value_at_quantile(0.99));
-    println!("    P99.9:           {:>6} µs", combined_hist.value_at_quantile(0.999));
+    println!(
+        "    P50   (Median):  {:>6} µs",
+        combined_hist.value_at_quantile(0.50)
+    );
+    println!(
+        "    P90:             {:>6} µs",
+        combined_hist.value_at_quantile(0.90)
+    );
+    println!(
+        "    P99:             {:>6} µs",
+        combined_hist.value_at_quantile(0.99)
+    );
+    println!(
+        "    P99.9:           {:>6} µs",
+        combined_hist.value_at_quantile(0.999)
+    );
     println!("    Max:             {:>6} µs", combined_hist.max());
     println!("==========================================================================\n");
 }

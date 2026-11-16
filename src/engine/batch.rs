@@ -26,9 +26,7 @@ impl WriteBatch {
 
     pub fn delete(&mut self, key: &[u8]) {
         self.size_in_bytes += key.len() + 8;
-        self.ops.push(BatchOp::Delete {
-            key: key.to_vec(),
-        });
+        self.ops.push(BatchOp::Delete { key: key.to_vec() });
     }
 
     #[inline(always)]

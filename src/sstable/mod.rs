@@ -44,7 +44,8 @@ impl TableBuilder {
     /// Add a key-value pair to the SSTable.
     /// Invariant: keys must be passed in monotonically increasing order.
     pub fn add(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
-        self.key_hashes.push(hash_key(key));
+        let ukey = crate::common::extract_user_key(key);
+        self.key_hashes.push(hash_key(ukey));
         self.last_key = key.to_vec();
         self.num_entries += 1;
 
@@ -62,20 +63,15 @@ impl TableBuilder {
             return Ok(());
         }
 
-        let old_builder = std::mem::replace(
-            &mut self.block_builder,
-            BlockBuilder::new(RESTART_INTERVAL),
-        );
+        let old_builder =
+            std::mem::replace(&mut self.block_builder, BlockBuilder::new(RESTART_INTERVAL));
         let block_bytes = old_builder.finish();
         let block_len = block_bytes.len() as u64;
 
         self.file.write_all(&block_bytes)?;
 
-        self.index_builder.add_block(
-            self.last_key.clone(),
-            self.current_offset,
-            block_len,
-        );
+        self.index_builder
+            .add_block(self.last_key.clone(), self.current_offset, block_len);
 
         self.current_offset += block_len;
         Ok(())
@@ -142,7 +138,9 @@ impl TableReader {
         let file_size = file.metadata()?.len() as usize;
 
         if file_size < FOOTER_ENCODED_SIZE {
-            return Err(AetherError::Corruption("SSTable file smaller than footer".into()));
+            return Err(AetherError::Corruption(
+                "SSTable file smaller than footer".into(),
+            ));
         }
 
         // Memory-map the SSTable with read-only permissions
@@ -163,9 +161,8 @@ impl TableReader {
         };
 
         let footer_offset = file_size - FOOTER_ENCODED_SIZE;
-        let footer_slice = unsafe {
-            std::slice::from_raw_parts(mmap_ptr.add(footer_offset), FOOTER_ENCODED_SIZE)
-        };
+        let footer_slice =
+            unsafe { std::slice::from_raw_parts(mmap_ptr.add(footer_offset), FOOTER_ENCODED_SIZE) };
         let footer = TableFooter::decode(footer_slice.try_into().unwrap())?;
 
         // Read Bloom Filter
@@ -213,8 +210,12 @@ impl TableReader {
     }
 
     /// Point lookup with AVX2 Bloom filter fast exit.
-    pub fn get(&self, target_key: &[u8]) -> Result<Option<Vec<u8>>> {
-        let hash = hash_key(target_key);
+    pub fn get(
+        &self,
+        user_key: &[u8],
+        snapshot_seq: crate::common::SequenceNumber,
+    ) -> Result<Option<(crate::common::ValueType, Vec<u8>)>> {
+        let hash = hash_key(user_key);
 
         // Sub-nanosecond Bloom check: eliminate cold disk lookups on non-existent keys
         if !self.bloom.may_contain_hash(hash) {
@@ -222,13 +223,15 @@ impl TableReader {
         }
 
         // Binary search sparse block index
-        let handle = match self.index.find_candidate_block(target_key) {
+        let handle = match self.index.find_candidate_block(user_key) {
             Some(h) => h,
             None => return Ok(None),
         };
 
         if (handle.offset + handle.size) as usize > self.file_size {
-            return Err(AetherError::Corruption("Block handle offset out of bounds".into()));
+            return Err(AetherError::Corruption(
+                "Block handle offset out of bounds".into(),
+            ));
         }
 
         let block_slice = unsafe {
@@ -239,7 +242,7 @@ impl TableReader {
         };
 
         let block_reader = BlockReader::new(block_slice)?;
-        Ok(block_reader.get(target_key))
+        Ok(block_reader.get(user_key, snapshot_seq))
     }
 
     /// Full iterator over all entries in the SSTable.
@@ -295,9 +298,7 @@ impl<'a> Iterator for TableIterator<'a> {
 
             if let Ok(block_reader) = BlockReader::new(block_slice) {
                 // We create an iterator with lifetime matching the mmap data slice
-                let it: BlockIterator<'a> = unsafe {
-                    std::mem::transmute(block_reader.iter())
-                };
+                let it: BlockIterator<'a> = unsafe { std::mem::transmute(block_reader.iter()) };
                 self.current_block_iter = Some(it);
             } else {
                 return None;
@@ -341,16 +342,16 @@ mod tests {
 
         // Test lookups for all keys
         for (k, v) in &dataset {
-            let res = reader.get(k).unwrap();
+            let ukey = crate::common::extract_user_key(k);
+            let res = reader.get(ukey, 100).unwrap();
             assert!(res.is_some(), "Key not found");
-            assert_eq!(res.unwrap(), *v);
+            assert_eq!(res.unwrap().1, *v);
         }
 
         // Test absent keys (fast Bloom exit)
         for i in 1000..1100 {
             let k = format!("absent_key_{:06}", i);
-            let ikey = InternalKey::new(k.into_bytes(), 1, ValueType::Put).encode();
-            let res = reader.get(&ikey).unwrap();
+            let res = reader.get(k.as_bytes(), 100).unwrap();
             assert!(res.is_none());
         }
 

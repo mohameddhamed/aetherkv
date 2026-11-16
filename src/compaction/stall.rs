@@ -10,6 +10,12 @@ pub struct BackpressureController {
     condvar: Condvar,
 }
 
+impl Default for BackpressureController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BackpressureController {
     pub fn new() -> Self {
         Self {

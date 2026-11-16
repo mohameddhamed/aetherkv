@@ -1,4 +1,6 @@
-use crate::common::{compare_internal_keys, crc32c, AetherError, Result};
+use crate::common::{
+    crc32c, extract_tag, extract_user_key, AetherError, Result, SequenceNumber, ValueType,
+};
 
 pub const BLOCK_TARGET_SIZE: usize = 4096;
 pub const RESTART_INTERVAL: usize = 16;
@@ -54,9 +56,12 @@ impl BlockBuilder {
         let unshared = key.len() - shared;
 
         // Encode: shared_len (u32), unshared_len (u32), val_len (u32)
-        self.buffer.extend_from_slice(&(shared as u32).to_le_bytes());
-        self.buffer.extend_from_slice(&(unshared as u32).to_le_bytes());
-        self.buffer.extend_from_slice(&(value.len() as u32).to_le_bytes());
+        self.buffer
+            .extend_from_slice(&(shared as u32).to_le_bytes());
+        self.buffer
+            .extend_from_slice(&(unshared as u32).to_le_bytes());
+        self.buffer
+            .extend_from_slice(&(value.len() as u32).to_le_bytes());
 
         // Delta key bytes and value bytes
         self.buffer.extend_from_slice(&key[shared..]);
@@ -108,13 +113,14 @@ impl<'a> BlockReader<'a> {
             });
         }
 
-        let num_restarts = u32::from_le_bytes(
-            data[payload_len - 4..payload_len].try_into().unwrap(),
-        ) as usize;
+        let num_restarts =
+            u32::from_le_bytes(data[payload_len - 4..payload_len].try_into().unwrap()) as usize;
 
         let restarts_size = num_restarts * 4;
         if payload_len < 4 + restarts_size {
-            return Err(AetherError::Corruption("Invalid block restart structure".into()));
+            return Err(AetherError::Corruption(
+                "Invalid block restart structure".into(),
+            ));
         }
 
         let restarts_offset = payload_len - 4 - restarts_size;
@@ -133,8 +139,12 @@ impl<'a> BlockReader<'a> {
         u32::from_le_bytes(self.data[base..base + 4].try_into().unwrap()) as usize
     }
 
-    /// Search for target key using binary search across restart points followed by delta scanning.
-    pub fn get(&self, target_key: &[u8]) -> Option<Vec<u8>> {
+    /// Search for user key using binary search across restart points followed by delta scanning.
+    pub fn get(
+        &self,
+        user_key: &[u8],
+        snapshot_seq: SequenceNumber,
+    ) -> Option<(ValueType, Vec<u8>)> {
         if self.num_restarts == 0 {
             return None;
         }
@@ -144,11 +154,11 @@ impl<'a> BlockReader<'a> {
         let mut right = self.num_restarts - 1;
 
         while left < right {
-            let mid = (left + right + 1) / 2;
+            let mid = (left + right).div_ceil(2);
             let offset = self.get_restart_offset(mid);
             let key = self.decode_restart_key(offset)?;
 
-            if compare_internal_keys(&key, target_key).is_le() {
+            if extract_user_key(&key) <= user_key {
                 left = mid;
             } else {
                 right = mid - 1;
@@ -171,9 +181,12 @@ impl<'a> BlockReader<'a> {
                 break;
             }
 
-            let shared = u32::from_le_bytes(self.data[offset..offset + 4].try_into().unwrap()) as usize;
-            let unshared = u32::from_le_bytes(self.data[offset + 4..offset + 8].try_into().unwrap()) as usize;
-            let val_len = u32::from_le_bytes(self.data[offset + 8..offset + 12].try_into().unwrap()) as usize;
+            let shared =
+                u32::from_le_bytes(self.data[offset..offset + 4].try_into().unwrap()) as usize;
+            let unshared =
+                u32::from_le_bytes(self.data[offset + 4..offset + 8].try_into().unwrap()) as usize;
+            let val_len =
+                u32::from_le_bytes(self.data[offset + 8..offset + 12].try_into().unwrap()) as usize;
             offset += 12;
 
             if offset + unshared + val_len > self.data_len {
@@ -187,10 +200,15 @@ impl<'a> BlockReader<'a> {
             let val = &self.data[offset..offset + val_len];
             offset += val_len;
 
-            match compare_internal_keys(&current_key, target_key) {
-                std::cmp::Ordering::Equal => return Some(val.to_vec()),
-                std::cmp::Ordering::Greater => return None,
-                std::cmp::Ordering::Less => {}
+            let ukey = extract_user_key(&current_key);
+            if ukey == user_key {
+                if let Some((seq, vt)) = extract_tag(&current_key) {
+                    if seq <= snapshot_seq {
+                        return Some((vt, val.to_vec()));
+                    }
+                }
+            } else if ukey > user_key {
+                return None;
             }
         }
 
@@ -202,8 +220,10 @@ impl<'a> BlockReader<'a> {
             return None;
         }
         let shared = u32::from_le_bytes(self.data[offset..offset + 4].try_into().unwrap()) as usize;
-        let unshared = u32::from_le_bytes(self.data[offset + 4..offset + 8].try_into().unwrap()) as usize;
-        let val_len = u32::from_le_bytes(self.data[offset + 8..offset + 12].try_into().unwrap()) as usize;
+        let unshared =
+            u32::from_le_bytes(self.data[offset + 4..offset + 8].try_into().unwrap()) as usize;
+        let val_len =
+            u32::from_le_bytes(self.data[offset + 8..offset + 12].try_into().unwrap()) as usize;
 
         if shared != 0 {
             return None; // Restart points must have shared == 0
@@ -242,9 +262,18 @@ impl<'a> Iterator for BlockIterator<'a> {
             return None;
         }
 
-        let shared = u32::from_le_bytes(self.data[self.offset..self.offset + 4].try_into().unwrap()) as usize;
-        let unshared = u32::from_le_bytes(self.data[self.offset + 4..self.offset + 8].try_into().unwrap()) as usize;
-        let val_len = u32::from_le_bytes(self.data[self.offset + 8..self.offset + 12].try_into().unwrap()) as usize;
+        let shared = u32::from_le_bytes(self.data[self.offset..self.offset + 4].try_into().unwrap())
+            as usize;
+        let unshared = u32::from_le_bytes(
+            self.data[self.offset + 4..self.offset + 8]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        let val_len = u32::from_le_bytes(
+            self.data[self.offset + 8..self.offset + 12]
+                .try_into()
+                .unwrap(),
+        ) as usize;
         self.offset += 12;
 
         if self.offset + unshared + val_len > self.data.len() {
@@ -252,7 +281,8 @@ impl<'a> Iterator for BlockIterator<'a> {
         }
 
         self.current_key.truncate(shared);
-        self.current_key.extend_from_slice(&self.data[self.offset..self.offset + unshared]);
+        self.current_key
+            .extend_from_slice(&self.data[self.offset..self.offset + unshared]);
         self.offset += unshared;
 
         let val = self.data[self.offset..self.offset + val_len].to_vec();
@@ -265,7 +295,7 @@ impl<'a> Iterator for BlockIterator<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::{InternalKey, ValueType};
+    use crate::common::{compare_internal_keys, InternalKey, ValueType};
 
     #[test]
     fn test_block_builder_and_reader() {
@@ -291,14 +321,14 @@ mod tests {
 
         // Test point lookups
         for (k, v) in &entries {
-            let res = reader.get(k);
+            let ukey = extract_user_key(k);
+            let res = reader.get(ukey, 100);
             assert!(res.is_some(), "Key not found in block");
-            assert_eq!(res.unwrap(), *v);
+            assert_eq!(res.unwrap().1, *v);
         }
 
         // Test absent key
-        let absent = InternalKey::new(b"nonexistent".to_vec(), 100, ValueType::Put).encode();
-        assert!(reader.get(&absent).is_none());
+        assert!(reader.get(b"nonexistent", 100).is_none());
 
         // Test iterator
         let decoded_entries: Vec<_> = reader.iter().collect();

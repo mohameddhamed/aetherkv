@@ -31,23 +31,21 @@ impl UioDriver {
         {
             use io_uring::{opcode, types};
 
-            let write_e = opcode::Write::new(
-                types::Fd(fd),
-                buffer.as_ptr(),
-                buffer.len() as u32,
-            )
-            .offset(offset as u64)
-            .build();
+            let write_e = opcode::Write::new(types::Fd(fd), buffer.as_ptr(), buffer.len() as u32)
+                .offset(offset as u64)
+                .build();
 
             unsafe {
-                self.ring.submission().push(&write_e)
-                    .map_err(|_| AetherError::Io(std::io::Error::new(
+                self.ring.submission().push(&write_e).map_err(|_| {
+                    AetherError::Io(std::io::Error::new(
                         std::io::ErrorKind::Other,
                         "io_uring submission queue full",
-                    )))?;
+                    ))
+                })?;
             }
 
-            self.ring.submit_and_wait(1)
+            self.ring
+                .submit_and_wait(1)
                 .map_err(|e| AetherError::Io(std::io::Error::from(e)))?;
 
             let mut cqe_iter = self.ring.completion();

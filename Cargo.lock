@@ -13,7 +13,6 @@ name = "aetherkv"
 version = "0.1.0"
 dependencies = [
  "criterion",
- "crossbeam-utils",
  "hdrhistogram",
  "io-uring",
  "libc",

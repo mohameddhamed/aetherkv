@@ -151,11 +151,7 @@ impl SectorAlignedBuffer {
     pub fn append(&mut self, data: &[u8]) -> usize {
         let to_copy = data.len().min(self.remaining());
         unsafe {
-            std::ptr::copy_nonoverlapping(
-                data.as_ptr(),
-                self.ptr.as_ptr().add(self.len),
-                to_copy,
-            );
+            std::ptr::copy_nonoverlapping(data.as_ptr(), self.ptr.as_ptr().add(self.len), to_copy);
         }
         self.len += to_copy;
         to_copy
@@ -214,23 +210,30 @@ pub fn encode_wal_record(key: &[u8], value: &[u8], value_type: ValueType) -> Vec
 /// Helper to decode a WAL payload into key, value, and value type.
 pub fn decode_wal_record(payload: &[u8]) -> Result<(Vec<u8>, Vec<u8>, ValueType)> {
     if payload.len() < 9 {
-        return Err(AetherError::Corruption("WAL record payload too short".into()));
+        return Err(AetherError::Corruption(
+            "WAL record payload too short".into(),
+        ));
     }
 
-    let vt = ValueType::from_u8(payload[0])
-        .ok_or_else(|| AetherError::InvalidRecordType(payload[0]))?;
+    let vt =
+        ValueType::from_u8(payload[0]).ok_or_else(|| AetherError::InvalidRecordType(payload[0]))?;
 
     let key_len = u32::from_le_bytes(payload[1..5].try_into().unwrap()) as usize;
     if payload.len() < 5 + key_len + 4 {
-        return Err(AetherError::Corruption("Corrupted WAL record key length".into()));
+        return Err(AetherError::Corruption(
+            "Corrupted WAL record key length".into(),
+        ));
     }
 
     let key = payload[5..5 + key_len].to_vec();
     let val_offset = 5 + key_len;
-    let val_len = u32::from_le_bytes(payload[val_offset..val_offset + 4].try_into().unwrap()) as usize;
+    let val_len =
+        u32::from_le_bytes(payload[val_offset..val_offset + 4].try_into().unwrap()) as usize;
 
     if payload.len() < val_offset + 4 + val_len {
-        return Err(AetherError::Corruption("Corrupted WAL record value length".into()));
+        return Err(AetherError::Corruption(
+            "Corrupted WAL record value length".into(),
+        ));
     }
 
     let val = payload[val_offset + 4..val_offset + 4 + val_len].to_vec();

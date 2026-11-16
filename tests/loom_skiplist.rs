@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 #[test]
 fn test_concurrent_skiplist_interleaving_permutations() {
-    #[cfg(loom)]
+    #[cfg(feature = "loom")]
     {
         loom::model(|| {
             let arena = Arc::new(AtomicArena::new(64 * 1024));
@@ -31,7 +31,7 @@ fn test_concurrent_skiplist_interleaving_permutations() {
         });
     }
 
-    #[cfg(not(loom))]
+    #[cfg(not(feature = "loom"))]
     {
         let arena = Arc::new(AtomicArena::new(512 * 1024));
         let list = Arc::new(ConcurrentSkipList::new(arena));

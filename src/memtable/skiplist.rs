@@ -17,14 +17,22 @@ pub struct SkipListNode {
 }
 
 impl SkipListNode {
+    /// Returns a reference to the atomic forward pointer at `level`.
+    ///
+    /// # Safety
+    /// The caller must ensure that `level < self.height` and that `self` points
+    /// to valid node memory inside the arena.
     #[inline(always)]
     pub unsafe fn next_ptr(&self, level: usize) -> &AtomicPtr<SkipListNode> {
-        let base = (self as *const Self as *const u8)
-            .add(std::mem::size_of::<SkipListNode>());
+        let base = (self as *const Self as *const u8).add(std::mem::size_of::<SkipListNode>());
         let ptr = base as *const AtomicPtr<SkipListNode>;
         &*ptr.add(level)
     }
 
+    /// Returns a byte slice view of the key payload.
+    ///
+    /// # Safety
+    /// The caller must ensure that `self` has been fully initialized with valid key bytes.
     #[inline(always)]
     pub unsafe fn key(&self) -> &[u8] {
         let base = (self as *const Self as *const u8).add(
@@ -34,6 +42,10 @@ impl SkipListNode {
         std::slice::from_raw_parts(base, self.key_len as usize)
     }
 
+    /// Returns a byte slice view of the value payload.
+    ///
+    /// # Safety
+    /// The caller must ensure that `self` has been fully initialized with valid value bytes.
     #[inline(always)]
     pub unsafe fn value(&self) -> &[u8] {
         let base = (self as *const Self as *const u8).add(
@@ -69,8 +81,8 @@ impl ConcurrentSkipList {
             (*head_ptr).flags = 0;
             (*head_ptr).seq_num = 0;
 
-            let next_base = (head_ptr as *mut u8)
-                .add(std::mem::size_of::<SkipListNode>()) as *mut AtomicPtr<SkipListNode>;
+            let next_base = (head_ptr as *mut u8).add(std::mem::size_of::<SkipListNode>())
+                as *mut AtomicPtr<SkipListNode>;
             for i in 0..MAX_HEIGHT {
                 std::ptr::write(next_base.add(i), AtomicPtr::new(null_mut()));
             }
@@ -105,7 +117,7 @@ impl ConcurrentSkipList {
             seed ^= seed << 13;
             seed ^= seed >> 17;
             seed ^= seed << 5;
-            if seed % BRANCHING_FACTOR != 0 {
+            if !seed.is_multiple_of(BRANCHING_FACTOR) {
                 break;
             }
             height += 1;
@@ -212,14 +224,14 @@ impl ConcurrentSkipList {
             (*new_node).seq_num = seq_num;
 
             // Initialize atomic pointers to null
-            let next_base = (node_mem as *mut u8)
-                .add(std::mem::size_of::<SkipListNode>()) as *mut AtomicPtr<SkipListNode>;
+            let next_base =
+                node_mem.add(std::mem::size_of::<SkipListNode>()) as *mut AtomicPtr<SkipListNode>;
             for i in 0..height {
                 std::ptr::write(next_base.add(i), AtomicPtr::new(null_mut()));
             }
 
             // Copy key bytes
-            let key_dest = (node_mem as *mut u8).add(
+            let key_dest = node_mem.add(
                 std::mem::size_of::<SkipListNode>()
                     + height * std::mem::size_of::<AtomicPtr<SkipListNode>>(),
             );
@@ -239,7 +251,9 @@ impl ConcurrentSkipList {
                 self.find_splice_points(internal_key, &mut prev, &mut succ);
 
                 unsafe {
-                    (*new_node).next_ptr(level).store(succ[level], Ordering::Relaxed);
+                    (*new_node)
+                        .next_ptr(level)
+                        .store(succ[level], Ordering::Relaxed);
                 }
 
                 // CAS linking with Release ordering on success to publish initialized node
@@ -356,7 +370,8 @@ mod tests {
                 for i in 0..items_per_thread {
                     let key_str = format!("user_{:04}_{:06}", t, i);
                     let val_str = format!("val_{:04}_{:06}", t, i);
-                    let ikey = InternalKey::new(key_str.into_bytes(), i as u64, ValueType::Put).encode();
+                    let ikey =
+                        InternalKey::new(key_str.into_bytes(), i as u64, ValueType::Put).encode();
                     assert!(l.insert(&ikey, val_str.as_bytes(), i as u64));
                 }
             }));
@@ -371,7 +386,8 @@ mod tests {
             for i in 0..items_per_thread {
                 let key_str = format!("user_{:04}_{:06}", t, i);
                 let expected_val = format!("val_{:04}_{:06}", t, i);
-                let ikey = InternalKey::new(key_str.into_bytes(), i as u64, ValueType::Put).encode();
+                let ikey =
+                    InternalKey::new(key_str.into_bytes(), i as u64, ValueType::Put).encode();
                 let res = list.get(&ikey).expect("key must be present");
                 assert_eq!(res.1, expected_val.as_bytes());
             }

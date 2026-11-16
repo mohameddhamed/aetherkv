@@ -85,7 +85,8 @@ impl VersionSet {
         }
 
         vset.log_and_apply(&edit)?;
-        vset.next_file_number.store(max_file_id + 1, Ordering::SeqCst);
+        vset.next_file_number
+            .store(max_file_id + 1, Ordering::SeqCst);
         vset.max_sequence.store(max_seq, Ordering::SeqCst);
         Ok(vset)
     }

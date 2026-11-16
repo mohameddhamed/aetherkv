@@ -137,12 +137,7 @@ impl WalSegment {
 fn preallocate_file(fd: RawFd, size: usize) -> Result<()> {
     #[cfg(target_os = "linux")]
     unsafe {
-        let ret = libc::fallocate(
-            fd,
-            libc::FALLOC_FL_ZERO_RANGE,
-            0,
-            size as libc::off_t,
-        );
+        let ret = libc::fallocate(fd, libc::FALLOC_FL_ZERO_RANGE, 0, size as libc::off_t);
         if ret != 0 {
             // Fallback to posix_fallocate if filesystem doesn't support FALLOC_FL_ZERO_RANGE
             let p_ret = libc::posix_fallocate(fd, 0, size as libc::off_t);

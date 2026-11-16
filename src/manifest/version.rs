@@ -1,4 +1,4 @@
-use crate::common::{compare_internal_keys, extract_tag, extract_user_key, SequenceNumber, ValueType};
+use crate::common::{compare_internal_keys, extract_user_key, SequenceNumber, ValueType};
 use crate::sstable::TableReader;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -56,15 +56,12 @@ impl Version {
         user_key: &[u8],
         snapshot_seq: SequenceNumber,
     ) -> Option<(ValueType, Vec<u8>)> {
-        // Construct target internal key for version search
-        let target = crate::common::InternalKey::new(user_key.to_vec(), snapshot_seq, ValueType::Put).encode();
-
         // 1. Search Level 0: files can overlap, scan from newest to oldest
         for file in self.levels[0].iter().rev() {
-            // Check bounding key range
-            if compare_internal_keys(&file.smallest_key, &target).is_le()
-                && compare_internal_keys(&file.largest_key, &target).is_ge()
-            {
+            let smallest_ukey = extract_user_key(&file.smallest_key);
+            let largest_ukey = extract_user_key(&file.largest_key);
+
+            if smallest_ukey <= user_key && user_key <= largest_ukey {
                 if let Some(res) = self.search_table(file.file_id, user_key, snapshot_seq) {
                     return Some(res);
                 }
@@ -78,14 +75,13 @@ impl Version {
                 continue;
             }
 
-            // Binary search candidate file
-            let idx = files.partition_point(|f| {
-                compare_internal_keys(&f.largest_key, &target).is_lt()
-            });
+            // Binary search candidate file by user key
+            let idx = files.partition_point(|f| extract_user_key(&f.largest_key) < user_key);
 
             if idx < files.len() {
                 let file = &files[idx];
-                if compare_internal_keys(&file.smallest_key, &target).is_le() {
+                let smallest_ukey = extract_user_key(&file.smallest_key);
+                if smallest_ukey <= user_key {
                     if let Some(res) = self.search_table(file.file_id, user_key, snapshot_seq) {
                         return Some(res);
                     }
@@ -104,25 +100,7 @@ impl Version {
     ) -> Option<(ValueType, Vec<u8>)> {
         let path = self.db_dir.join(format!("{:08}.sst", file_id));
         let reader = TableReader::open(&path).ok()?;
-
-        // Point query inside SSTable
-        let target = crate::common::InternalKey::new(user_key.to_vec(), snapshot_seq, ValueType::Put).encode();
-        if let Ok(Some(val)) = reader.get(&target) {
-            return Some((ValueType::Put, val));
-        }
-
-        // Check if there is an exact or older version matching user_key in this table
-        for (ikey, val) in reader.iter() {
-            if extract_user_key(&ikey) == user_key {
-                if let Some((seq, vt)) = extract_tag(&ikey) {
-                    if seq <= snapshot_seq {
-                        return Some((vt, val));
-                    }
-                }
-            }
-        }
-
-        None
+        reader.get(user_key, snapshot_seq).ok().flatten()
     }
 
     /// Apply delta edits to create a new Version.
@@ -142,9 +120,8 @@ impl Version {
                 new_levels[*level].push(Arc::new(file_meta.clone()));
                 if *level > 0 {
                     // Sort files in levels 1..N by smallest_key
-                    new_levels[*level].sort_by(|a, b| {
-                        compare_internal_keys(&a.smallest_key, &b.smallest_key)
-                    });
+                    new_levels[*level]
+                        .sort_by(|a, b| compare_internal_keys(&a.smallest_key, &b.smallest_key));
                 }
             }
         }

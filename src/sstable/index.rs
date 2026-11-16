@@ -1,4 +1,4 @@
-use crate::common::{compare_internal_keys, AetherError, Result};
+use crate::common::{extract_user_key, AetherError, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockHandle {
@@ -15,6 +15,12 @@ pub struct IndexEntry {
 /// Two-level sparse block index builder.
 pub struct IndexBuilder {
     entries: Vec<IndexEntry>,
+}
+
+impl Default for IndexBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl IndexBuilder {
@@ -79,10 +85,13 @@ impl BlockIndex {
 
         for _ in 0..num_entries {
             if offset + 4 > bytes.len() {
-                return Err(AetherError::Corruption("Truncated index entry header".into()));
+                return Err(AetherError::Corruption(
+                    "Truncated index entry header".into(),
+                ));
             }
 
-            let key_len = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+            let key_len =
+                u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
             offset += 4;
 
             if offset + key_len + 16 > bytes.len() {
@@ -110,8 +119,8 @@ impl BlockIndex {
         Ok(Self { entries })
     }
 
-    /// Binary search for candidate data block that could contain target_key.
-    pub fn find_candidate_block(&self, target_key: &[u8]) -> Option<BlockHandle> {
+    /// Binary search for candidate data block that could contain user_key.
+    pub fn find_candidate_block(&self, user_key: &[u8]) -> Option<BlockHandle> {
         if self.entries.is_empty() {
             return None;
         }
@@ -121,9 +130,9 @@ impl BlockIndex {
 
         while left < right {
             let mid = left + (right - left) / 2;
-            let entry_key = &self.entries[mid].largest_key;
+            let entry_ukey = extract_user_key(&self.entries[mid].largest_key);
 
-            if compare_internal_keys(entry_key, target_key).is_lt() {
+            if entry_ukey < user_key {
                 left = mid + 1;
             } else {
                 right = mid;

@@ -82,8 +82,7 @@ impl MemTable {
         // In internal key ordering, for identical user_keys, higher seq numbers sort first.
         let target = InternalKey::new(user_key.to_vec(), snapshot_seq, ValueType::Put).encode();
 
-        let mut it = self.skiplist.iter();
-        while let Some((_, ikey, val)) = it.next() {
+        for (_, ikey, val) in self.skiplist.iter() {
             let ukey = extract_user_key(&ikey);
             if ukey == user_key {
                 if let Some((seq, vt)) = extract_tag(&ikey) {

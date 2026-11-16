@@ -9,10 +9,7 @@ impl RecoveryManager {
     /// Recover state from all WAL segments in the database directory.
     /// Replays all validated mutations into the active MemTable.
     /// Returns the highest recovered Log Sequence Number (LSN).
-    pub fn recover_wal<P: AsRef<Path>>(
-        db_dir: P,
-        active_mem: &MemTable,
-    ) -> Result<u64> {
+    pub fn recover_wal<P: AsRef<Path>>(db_dir: P, active_mem: &MemTable) -> Result<u64> {
         let db_dir = db_dir.as_ref();
         let mut wal_files = Vec::new();
 
@@ -53,9 +50,9 @@ impl RecoveryManager {
                             if offset + 4 > payload.len() {
                                 break;
                             }
-                            let rec_len = u32::from_le_bytes(
-                                payload[offset..offset + 4].try_into().unwrap(),
-                            ) as usize;
+                            let rec_len =
+                                u32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap())
+                                    as usize;
                             offset += 4;
                             if offset + rec_len > payload.len() {
                                 break;
